@@ -1,0 +1,22 @@
+# data & weights (large, don't commit)
+data/raw/**
+data/processed/**
+!data/raw/**/.gitkeep
+!data/processed/**/.gitkeep
+checkpoints/*
+!checkpoints/.gitkeep
+*.wav
+*.pt
+*.onnx
+
+# python
+__pycache__/
+*.pyc
+.venv/
+venv/
+
+# notebooks
+.ipynb_checkpoints/
+
+# os
+.DS_Store
