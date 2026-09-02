@@ -1,54 +1,71 @@
 """
 Training entrypoint.
 
-Owner: Track 2 (Model) — merges with Track 1's dataset.py once manifest.csv exists.
+Owner: Track 2 (Model)
 
-Stage 1 (today, before real data exists): validate the pipeline plumbing
-with dummy tensors — confirms forward/backward pass works before real data
-is mixed in as a second variable.
-
-Stage 2 (merge point): swap dummy_input for the real ANCDataset + DataLoader.
+Run from inside src/:
+    python train.py
 """
+
+import os
 
 import torch
 from torch.utils.data import DataLoader
+from tqdm import tqdm
 
 from losses import si_snr_loss
-# from models.dccrn import DCCRN
-# from models.conv_tasnet import ConvTasNet
-# from data.dataset import ANCDataset
+from models.conv_tasnet import ConvTasNet
+from data.dataset import ANCDataset
+
+os.makedirs("../checkpoints", exist_ok=True)
 
 
-def validate_pipeline():
-    """Stage 1: confirm the model runs end-to-end on dummy data."""
-    dummy_input = torch.randn(4, 1, 16000)  # batch=4, mono, 1 sec @ 16kHz
-    # model = DCCRN()  # or ConvTasNet()
-    # output = model(dummy_input)
-    # loss = si_snr_loss(output, dummy_input)  # dummy target for now
-    # loss.backward()
-    # print("Pipeline runs. Output shape:", output.shape)
-    raise NotImplementedError("Uncomment above once a model is wired in")
+def train(manifest_csv: str = "../data/manifest.csv", epochs: int = 5, batch_size: int = 8, lr: float = 1e-3):
+    device = torch.device("mps" if torch.backends.mps.is_available() else "cpu")
+    print(f"Using device: {device}")
 
+    dataset = ANCDataset(manifest_csv, split="train")
+    print(f"Training on {len(dataset)} pairs")
+    loader = DataLoader(dataset, batch_size=batch_size, shuffle=True, num_workers=2)
 
-def train(manifest_csv: str, epochs: int = 10, batch_size: int = 4, lr: float = 1e-3):
-    """Stage 2: real training loop, called once manifest.csv exists."""
-    # dataset = ANCDataset(manifest_csv)
-    # loader = DataLoader(dataset, batch_size=batch_size, shuffle=True)
-    # model = DCCRN()
-    # optimizer = torch.optim.Adam(model.parameters(), lr=lr)
-    #
-    # for epoch in range(epochs):
-    #     for noisy, clean in loader:
-    #         optimizer.zero_grad()
-    #         estimate = model(noisy)
-    #         loss = si_snr_loss(estimate, clean)
-    #         loss.backward()
-    #         optimizer.step()
-    #     print(f"epoch {epoch} loss {loss.item():.4f}")
-    #     torch.save(model.state_dict(), f"checkpoints/epoch_{epoch}.pt")
-    raise NotImplementedError
+    model = ConvTasNet(
+        N=64, L=20, B=64, H=128, P=3, X=6, R=2, C=1,
+        norm_type="gLN", causal=False, mask_nonlinear='relu'
+    ).to(device)
+    optimizer = torch.optim.Adam(model.parameters(), lr=lr)
+
+    for epoch in range(epochs):
+        model.train()
+        running_loss = 0.0
+        n_batches = 0
+
+        for noisy, clean in tqdm(loader, desc=f"epoch {epoch+1}"):
+            noisy, clean = noisy.to(device), clean.to(device)
+            optimizer.zero_grad()
+
+            # model expects [batch, T] (2D), dataset gives [batch, 1, T] (3D)
+            estimate = model(noisy.squeeze(1))  # -> [batch, C=1, T]
+
+            loss = si_snr_loss(estimate, clean)
+            loss.backward()
+            optimizer.step()
+
+            running_loss += loss.item()
+            n_batches += 1
+
+        avg_loss = running_loss / max(n_batches, 1)
+        print(f"epoch {epoch+1}/{epochs}  loss {avg_loss:.4f}")
+        torch.save(model.state_dict(), f"../checkpoints/epoch_{epoch+1}.pt")
+
+    torch.save(model.state_dict(), "../checkpoints/prototype.pt")
+    print("Saved final checkpoint to checkpoints/prototype.pt")
 
 
 if __name__ == "__main__":
-    validate_pipeline()
-    # train("data/manifest.csv")
+    train()
+    
+    
+    
+    
+    
+    
